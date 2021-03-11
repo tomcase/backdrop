@@ -1,17 +1,23 @@
 package main
 
 import (
-	"backgroundl/reddit"
+	"backdropGo/reddit"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"github.com/joho/godotenv"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -21,32 +27,87 @@ func main() {
 	}
 
 	version := os.Getenv("VERSION")
-	fmt.Println(fmt.Sprintf("Starting Downloadl v%s", version))
+	log.Println(fmt.Sprintf("Starting Downloadl v%s", version))
 
-	configDir, err := os.UserConfigDir()
+	_, err = os.UserConfigDir()
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
-	fmt.Println(configDir) // C:\Users\YourUser
 
 	client := &http.Client{}
 
 	authResp, err := authenticate(client)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
-
-	fmt.Println(authResp.AccessToken)
 
 	resp, err := getListing(client, authResp)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	for _, post := range resp.Data.Children {
-		fmt.Println(post.Data.URLOverriddenByDest)
+		outputDir := os.Getenv("OUTPUT_DIR")
+		outputFile := filepath.Join(outputDir, filepath.Base(post.Data.URL))
+		err = downloadFile(post.Data.URL, outputFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		err = checkImageWidth(outputFile)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
+}
+
+func checkImageWidth(fileName string) error {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	im, _, err := image.DecodeConfig(file)
+	if err != nil {
+		return err
+	}
+
+	if im.Width < 1920 {
+		os.Remove(fileName)
+	}
+
+	return nil
+}
+
+func downloadFile(URL, fileName string) error {
+	//Get the response bytes from the url
+	response, err := http.Get(URL)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != 200 {
+		return errors.New("Received non 200 response code")
+	}
+
+	//Create a empty file
+	file, err := os.Create(fileName)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	//Write the bytes to the fiel
+	written, err := io.Copy(file, response.Body)
+	if err != nil {
+		return err
+	}
+
+	log.Println(fmt.Sprintf("Finished writing %s with %d bytes written.", fileName, written))
+
+	return nil
 }
 
 func getListing(c *http.Client, s *reddit.InstalledClientAuthentication) (*reddit.ListingResponse, error) {
@@ -62,7 +123,7 @@ func getListing(c *http.Client, s *reddit.InstalledClientAuthentication) (*reddi
 		return nil, err
 	}
 
-	fmt.Println(resp.StatusCode)
+	log.Println(resp.StatusCode)
 
 	result := &reddit.ListingResponse{}
 
@@ -93,14 +154,12 @@ func authenticate(c *http.Client) (*reddit.InstalledClientAuthentication, error)
 	r, _ := http.NewRequest(http.MethodPost, authURL, strings.NewReader(data.Encode())) // URL-encoded payload
 	r.Header.Add("Authorization", fmt.Sprintf("Basic %s", basicAuth(clientID, "")))
 	r.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Add("Content-Length", strconv.Itoa(len(data.Encode())))
 	r.Header.Add("User-Agent", userAgent)
 
 	resp, err := c.Do(r)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("Authentication: %s\n", resp.Status)
 
 	authResp := &reddit.InstalledClientAuthentication{}
 
