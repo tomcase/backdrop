@@ -2,6 +2,7 @@ package main
 
 import (
 	"backdropGo/reddit"
+	"backdropGo/sqlite"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -29,7 +30,7 @@ func main() {
 	version := os.Getenv("VERSION")
 	log.Println(fmt.Sprintf("Starting Downloadl v%s", version))
 
-	_, err = os.UserConfigDir()
+	err = sqlite.CreateDatabase()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func checkImageWidth(fileName string) error {
 		return err
 	}
 
-	if im.Width < 1920 {
+	if im.Width < 2048 || im.Height < 1280 || im.Width < im.Height {
 		os.Remove(fileName)
 	}
 
@@ -111,7 +112,7 @@ func downloadFile(URL, fileName string) error {
 }
 
 func getListing(c *http.Client, s *reddit.InstalledClientAuthentication) (*reddit.ListingResponse, error) {
-	requestURL := "https://oauth.reddit.com/r/earthporn/top"
+	requestURL := "https://oauth.reddit.com/r/earthporn/top?limit=100"
 	userAgent := os.Getenv("USER_AGENT")
 
 	r, _ := http.NewRequest(http.MethodGet, requestURL, nil) // URL-encoded payload
