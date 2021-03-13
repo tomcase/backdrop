@@ -1,11 +1,12 @@
 package main
 
 import (
+	"backdropGo/db"
 	"backdropGo/reddit"
-	"backdropGo/sqlite"
+	"backdropGo/settings"
+	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -22,6 +23,8 @@ import (
 )
 
 func main() {
+	defaultContext := context.Background()
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")
@@ -30,14 +33,17 @@ func main() {
 	version := os.Getenv("VERSION")
 	log.Println(fmt.Sprintf("Starting Downloadl v%s", version))
 
-	err = sqlite.CreateDatabase()
+	postgresDb := &db.DB{}
+	err = postgresDb.TestConnection(defaultContext)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	checkDeviceIDExists(defaultContext, postgresDb)
+
 	client := &http.Client{}
 
-	authResp, err := authenticate(client)
+	authResp, err := authenticate(defaultContext, client, postgresDb)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -48,21 +54,46 @@ func main() {
 	}
 
 	for _, post := range resp.Data.Children {
-		outputDir := os.Getenv("OUTPUT_DIR")
+		outputDir, err := settings.GetOutputDirectory(defaultContext, postgresDb)
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		outputFile := filepath.Join(outputDir, filepath.Base(post.Data.URL))
 		err = downloadFile(post.Data.URL, outputFile)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		err = checkImageWidth(outputFile)
+		err = verifyImage(outputFile)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
 }
 
-func checkImageWidth(fileName string) error {
+func checkDeviceIDExists(ctx context.Context, srw db.SettingsReaderWriter) error {
+	deviceID, err := settings.GetDeviceID(ctx, srw)
+	if err != nil {
+		return err
+	}
+
+	if deviceID == "" {
+		deviceID, err = settings.CreateDeviceID(ctx, srw)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyImage(fileName string) error {
+	ext := filepath.Ext(fileName)
+	if ext != ".jpg" && ext != ".png" {
+		os.Remove(fileName)
+		return nil
+	}
+
 	file, err := os.Open(fileName)
 	if err != nil {
 		return err
@@ -90,7 +121,9 @@ func downloadFile(URL, fileName string) error {
 	defer response.Body.Close()
 
 	if response.StatusCode != 200 {
-		return errors.New("Received non 200 response code")
+		msg := fmt.Sprintf("Failed to download from %s - StatusCode: %d -- SKIPPING", URL, response.StatusCode)
+		log.Default().Println(msg)
+		return nil
 	}
 
 	//Create a empty file
@@ -124,8 +157,6 @@ func getListing(c *http.Client, s *reddit.InstalledClientAuthentication) (*reddi
 		return nil, err
 	}
 
-	log.Println(resp.StatusCode)
-
 	result := &reddit.ListingResponse{}
 
 	err = json.NewDecoder(resp.Body).Decode(result)
@@ -141,11 +172,17 @@ func basicAuth(username, password string) string {
 	return base64.StdEncoding.EncodeToString([]byte(auth))
 }
 
-func authenticate(c *http.Client) (*reddit.InstalledClientAuthentication, error) {
+func authenticate(ctx context.Context, c *http.Client, sg db.SettingsReader) (*reddit.InstalledClientAuthentication, error) {
 	authURL := "https://www.reddit.com/api/v1/access_token"
-	deviceID := os.Getenv("DEVICE_ID")
-	grantType := os.Getenv("GRANT_TYPE")
-	clientID := os.Getenv("CLIENT_ID")
+	deviceID, err := settings.GetDeviceID(ctx, sg)
+	if err != nil {
+		return nil, err
+	}
+	grantType := "https://oauth.reddit.com/grants/installed_client"
+	clientID, err := settings.GetClientID(ctx, sg)
+	if err != nil {
+		return nil, err
+	}
 	userAgent := os.Getenv("USER_AGENT")
 
 	data := url.Values{}
