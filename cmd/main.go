@@ -1,12 +1,11 @@
 package main
 
 import (
-	"backdropGo/db"
 	"backdropGo/reddit"
-	"backdropGo/settings"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -22,6 +21,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
+var (
+	CLIENT_ID string = "VIz3jyOacujEuQ"
+)
+
 func main() {
 	defaultContext := context.Background()
 
@@ -30,20 +33,14 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	version := os.Getenv("VERSION")
-	log.Println(fmt.Sprintf("Starting Downloadl v%s", version))
+	version := os.Getenv("BG_VERSION")
+	log.Println(fmt.Sprintf("Starting Backdrop v%s", version))
 
-	postgresDb := &db.DB{}
-	err = postgresDb.TestConnection(defaultContext)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	checkDeviceIDExists(defaultContext, postgresDb)
+	checkDeviceIDExists(defaultContext)
 
 	client := &http.Client{}
 
-	authResp, err := authenticate(defaultContext, client, postgresDb)
+	authResp, err := authenticate(defaultContext, client)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,11 +51,7 @@ func main() {
 	}
 
 	for _, post := range resp.Data.Children {
-		outputDir, err := settings.GetOutputDirectory(defaultContext, postgresDb)
-		if err != nil {
-			log.Fatal(err)
-		}
-
+		outputDir := "/output"
 		outputFile := filepath.Join(outputDir, filepath.Base(post.Data.URL))
 		err = downloadFile(post.Data.URL, outputFile)
 		if err != nil {
@@ -72,17 +65,10 @@ func main() {
 	}
 }
 
-func checkDeviceIDExists(ctx context.Context, srw db.SettingsReaderWriter) error {
-	deviceID, err := settings.GetDeviceID(ctx, srw)
-	if err != nil {
-		return err
-	}
-
+func checkDeviceIDExists(ctx context.Context) error {
+	deviceID := os.Getenv("BG_DEVICE_ID")
 	if deviceID == "" {
-		deviceID, err = settings.CreateDeviceID(ctx, srw)
-		if err != nil {
-			return err
-		}
+		return errors.New("You must set the DEVICE_ID environment variable to a unique string of 20-30 characters.")
 	}
 	return nil
 }
@@ -146,7 +132,7 @@ func downloadFile(URL, fileName string) error {
 
 func getListing(c *http.Client, s *reddit.InstalledClientAuthentication) (*reddit.ListingResponse, error) {
 	requestURL := "https://oauth.reddit.com/r/earthporn/top?limit=100"
-	userAgent := os.Getenv("USER_AGENT")
+	userAgent := os.Getenv("BG_USER_AGENT")
 
 	r, _ := http.NewRequest(http.MethodGet, requestURL, nil) // URL-encoded payload
 	r.Header.Add("Authorization", fmt.Sprintf("Bearer %s", s.AccessToken))
@@ -172,18 +158,12 @@ func basicAuth(username, password string) string {
 	return base64.StdEncoding.EncodeToString([]byte(auth))
 }
 
-func authenticate(ctx context.Context, c *http.Client, sg db.SettingsReader) (*reddit.InstalledClientAuthentication, error) {
+func authenticate(ctx context.Context, c *http.Client) (*reddit.InstalledClientAuthentication, error) {
 	authURL := "https://www.reddit.com/api/v1/access_token"
-	deviceID, err := settings.GetDeviceID(ctx, sg)
-	if err != nil {
-		return nil, err
-	}
+	deviceID := os.Getenv("BG_DEVICE_ID")
 	grantType := "https://oauth.reddit.com/grants/installed_client"
-	clientID, err := settings.GetClientID(ctx, sg)
-	if err != nil {
-		return nil, err
-	}
-	userAgent := os.Getenv("USER_AGENT")
+	clientID := CLIENT_ID
+	userAgent := os.Getenv("BG_USER_AGENT")
 
 	data := url.Values{}
 	data.Set("grant_type", grantType)

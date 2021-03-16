@@ -1,7 +1,0 @@
-BEGIN;
-
-DROP TABLE IF EXISTS settings;
-
-DROP EXTENSION IF EXISTS "uuid-ossp";
-
-COMMIT;
