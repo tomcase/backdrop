@@ -8,7 +8,7 @@ GOGET=$(GOCMD) get
 DEVICE_ID=f015ca13-7e3b-431e-ac61-8ec593db09ae
 OUTPUT_DIR=/Users/tom/Pictures/Backgrounds
 
-# This is a change to trigger the buil
+# This is a change to trigger the build
 
 # Binary names
 BINARY_NAME=backdrop
